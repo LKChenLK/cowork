@@ -61,8 +61,11 @@ git push -u origin develop
 在**專用 clone 或 worktree**（不與任何人的工作區共用）的 `develop` 上執行：
 
 ```bash
-bash scripts/sync-upstream.sh
+bash scripts/sync-upstream.sh --official develop gl/master
 ```
+
+`--official` 後面兩個參數順序不拘：以 `gl/` 開頭的是上游 ref，另一個是主線名稱；
+兩個都要給，沒有預設值。
 
 腳本會做 replace-then-restore：`git read-tree -u --reset gl/master` 把整棵樹換成
 上游（含上游的刪除），再用獨佔路徑清單把 internal 檔案撈回來，最後在一條新切出的
@@ -85,10 +88,39 @@ NEVER 直接推 `develop`**——落地永遠是 feature branch → 人工確認
 的安全裝置，**NEVER 為了讓同步跑完而跳過它們**——若真的擋到你，先解決守門指出的
 問題（多半是清單漏列了新的 internal 獨佔檔），而不是繞過檢查。
 
-若 internal 側的主線不叫 `develop`，帶第一個位置參數覆寫，例如
-`bash scripts/sync-upstream.sh <主線名>`（如 `bash scripts/sync-upstream.sh
-feature/main`）；不帶參數則預設 `develop`。**NEVER 直接改腳本裡的字面值**——
-`scripts/sync-upstream.sh` 是上游檔，同步會把改動蓋回預設，下一次執行就拒跑。
+若 internal 側的主線不叫 `develop`，把主線名稱換成實際的 branch，例如
+`bash scripts/sync-upstream.sh --official feature/main gl/master`；上游 ref 也
+不一定要是 `gl/master`，見下方「用 feature 整合分支當主線」一節。**NEVER 直接改
+腳本裡的字面值**——`scripts/sync-upstream.sh` 是上游檔，同步會把改動蓋回預設，
+下一次執行就拒跑。
+
+---
+
+## 3.1 用 feature 整合分支當主線
+
+GitHub 端有時會先把幾個 feature 合進一條整合分支（例如 `feat/9E`），internal 側
+短期只能在自己對應的主線（例如 `9E`）上收，還不能動 `develop`。這種情況下，上游
+ref 換成該整合分支即可，用法不變：
+
+```bash
+bash scripts/sync-upstream.sh --official 9E gl/feat/9E
+```
+
+`9E` 這條主線建議從 `develop` 切出（這樣它天生就帶著 `develop` 已有的所有同步
+錨點，不需要另外 bootstrap）。收尾方式：
+
+1. GitHub 端把 `feat/9E` 以 **merge commit**（不是 squash）併回 `master`
+2. internal 側把 `9E` merge 進 `develop`
+3. 之後 `develop` 上跑 `bash scripts/sync-upstream.sh --official develop gl/master`，
+   錨點祖先守門會發現 `9E` 帶進來的錨點是新 `gl/master` 的祖先，照常通過並繼續往下同步
+
+兩條鐵律：
+
+- **GitHub 端的整合分支（`feat/9E`）永遠不 rebase、不 force-push**——一旦重寫，
+  internal 側已經記下的錨點就不再是它的祖先，下次同步會被錨點守門擋下，MUST 人工
+  修錨才能繼續
+- **`9E` 併進 `master` 不 squash**——squash 會讓 internal 側記下的 `Upstream-Commit`
+  錨點從 `master` 的歷史裡消失，錨點祖先守門會誤判成錨點被污染
 
 ---
 
@@ -100,22 +132,19 @@ feature/main`）；不帶參數則預設 `develop`。**NEVER 直接改腳本裡�
 替你創建或丟棄任何 branch：
 
 ```bash
-git checkout -b test/mine develop            # 只做一次
-bash scripts/sync-upstream.sh gl/feat/<name> # 之後每次上游推進都重跑這行，站在 test/mine 上原地執行
+git checkout -b test/mine develop              # 只做一次
+bash scripts/sync-upstream.sh --test gl/feat/<name>  # 之後每次上游推進都重跑這行，站在 test/mine 上原地執行
 ```
 
-`gl/` 前綴是 remote 名稱，不可能是 internal 主線名稱，單參數形式因此沒有歧義：帶了
-以 `gl/` 開頭的單一參數，`MAIN_BRANCH` 自動預設 `develop`。非 `develop` 主線環境
-用兩參數形式：`bash scripts/sync-upstream.sh <主線名> gl/feat/<name>`。
+`--test` 只接受一個以 `gl/` 開頭的參數，沒有主線可以指定——擁有路徑固定從
+`develop` 還原。
 
-模式判定表（腳本用「目前站在哪條 branch」判斷，不需要額外參數）：
+模式判定表（腳本用「目前站在哪條 branch」判斷）：
 
 | 目前站的位置 | 結果 |
 |---|---|
-| `$MAIN_BRANCH` ＋帶測試 ref | 拒跑，指路「先 `git checkout -b test/<名字>`」 |
-| 自建的 `test/*` ＋帶測試 ref | in-place：就地疊一顆快照 commit，branch 不變 |
-| 其他 branch ＋帶測試 ref | 拒跑，無法判斷意圖，防止整棵樹替換波及不相干的 branch |
-| 任一 branch，不帶測試 ref（即 `gl/master`） | 官方同步語意，不受本節影響 |
+| 自建的 `test/*` | in-place：就地疊一顆快照 commit，branch 不變 |
+| 其他 branch | 拒跑，無法判斷意圖，防止整棵樹替換波及不相干的 branch |
 
 雙重隔離讓測試產物在基準機制眼裡完全隱形：
 
@@ -130,9 +159,9 @@ bash scripts/sync-upstream.sh gl/feat/<name> # 之後每次上游推進都重跑
 鐵律：
 
 - **本模式整棵樹替換**——`test/mine` 上任何不是 `test-sync:` 這條路徑產生的手工
-  改動，下次重跑都會被覆蓋；internal 接縫改動照舊只能進 `$MAIN_BRANCH` 的獨佔路徑，
+  改動，下次重跑都會被覆蓋；internal 接縫改動照舊只能進 `develop` 的獨佔路徑，
   絕不要指望 in-place 測試 branch 能保留它
-- **NEVER merge 進 `$MAIN_BRANCH`**——就算違規 merge 了，雙重隔離仍能保證它不會被
+- **NEVER merge 進 `develop`**——就算違規 merge 了，雙重隔離仍能保證它不會被
   誤選為下次同步的基準錨點，但它會把未經上游正式收錄的內容留在主線上，仍是需要
   人工清理的污染
 - **用完刪掉**——驗證告一段落後，`test/mine` 本地與 `origin` 都刪，不要留著佔位
@@ -218,6 +247,6 @@ commit 到 `develop`，同步時 `git checkout develop -- <path>` 才有東西�
 - `scripts/sync-upstream.sh` — 同步腳本本體（internal 側執行、家裡維護）
 - `scripts/internal-owned-paths.txt` / `scripts/manual-merge-paths.txt` — 兩份清單
 - `scripts/test-sync-upstream.sh` — 守門行為的自動化驗證，在拋棄式 git repo 上跑
-  十六個情境，`bash scripts/test-sync-upstream.sh` 即可執行
+  一系列情境，`bash scripts/test-sync-upstream.sh` 即可執行
 - `deepagent-service/app/agent/runtime/base.py` — `AgentRuntime` 接縫（本流程要
   搬運的主體）
