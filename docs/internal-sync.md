@@ -131,6 +131,10 @@ bash scripts/sync-upstream.sh --official 9E gl/feat/9E
 `test/*` branch，站上去反覆執行同一條指令，每次疊一顆新的快照 commit，腳本不會
 替你創建或丟棄任何 branch：
 
+測試模式的錨點查找與獨佔路徑還原固定用 `origin/develop`. 主線不是 develop 的站台, 測試模式
+驗到的會是 develop 的組合, 結果不可信; 沒有 develop 的站台會拿到「找不到基準同步 commit」.
+這種環境請直接用 `--official <主線> <gl/ref>` 在主線上正式同步.
+
 ```bash
 git checkout -b test/mine develop              # 只做一次
 bash scripts/sync-upstream.sh --test gl/feat/<name>  # 之後每次上游推進都重跑這行，站在 test/mine 上原地執行
