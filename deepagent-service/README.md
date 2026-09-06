@@ -125,6 +125,26 @@ ERD_AGENT_ANALYSIS_BASE_URL=http://deepagent-service:8000
 使用者觸發的瀏覽器修復（`POST /repair`），詳見 `docs/architecture.md`「deepagent-service
 品質防線（注入契約 + 瀏覽器修復）」節。
 
+## 手動測 `/chat`（不用 backend／frontend）
+
+`scripts/dev_chat.py` 直接對本服務的 `/chat`（SSE）打一輪對話，事件即時印出、`DASHBOARD_HTML`
+落地成檔案。服務照上面任一種方式起好即可，不需要 backend、前端或 Mongo。
+
+```bash
+cd deepagent-service
+uv run scripts/dev_chat.py --csv ~/data/sales.csv "哪個月最需要改善?"   # 首輪（--csv 可重複）
+uv run scripts/dev_chat.py "改成長條圖" --open                          # 續問，畫完用瀏覽器開
+uv run scripts/dev_chat.py --new --csv ~/other.csv "換一份資料"         # 重開 session
+```
+
+必填的只有 message。sessionId／history／sources／`previousDashboardHtml` 由腳本自動跨輪維護
+（狀態存 `.dev-session/`，gitignored），模擬 backend 的簿記；bearer token 與服務端同源解析
+（env `AGENT_API_BEARER_TOKEN` > `one-local.properties`，都沒設則退回 compose 預設
+`dev-agent-token`），`--token` 可覆寫。`--csv` 的複製目的地帶 `uploads/` 路徑段是硬性要求——
+local 模式下 `app/engine/source_cache.py` 的快取 key 就是從該段起算。
+
+只涵蓋 `/chat`；`/repair` 不在此腳本範圍。
+
 ## 測試
 
 ```bash

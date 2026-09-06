@@ -6,3 +6,6 @@ __pycache__/
 
 # 本機開發者的真實設定檔（含 secrets）；進版控的範本是 one.properties
 one-local.properties
+
+# dev_chat.py 的本機對話狀態
+.dev-session/
