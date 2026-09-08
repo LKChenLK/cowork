@@ -718,6 +718,27 @@ else
   FAILURES=$((FAILURES + 1))
 fi
 
+# 情境 ㉜b：GitLab 端把 GitHub 既有檔案改名——git 預設會偵測成 rename 而不是刪除加新增,
+# 第 3 道守門要靠 --no-renames 把它拆回來擋下, stderr 要看得到被改名的原路徑.
+setup
+SHA_RENAME_32B=$(cd "$WORK_ROOT/clone" && git rev-parse gl/master)
+(
+  cd "$WORK_ROOT/seed"
+  git checkout -q master
+  git mv backend/pom.xml backend/pom.renamed.xml
+  git commit -qm "GitLab 端改名 pom.xml"
+  git push -q origin HEAD:master
+)
+(cd "$WORK_ROOT/clone" && git fetch -q gl)
+STDERR_32B=$(cd "$WORK_ROOT/clone" && bash scripts/sync-upstream.sh --official gl/master "$SHA_RENAME_32B" 2>&1 >/dev/null)
+EXIT_32B=$?
+if [ "$EXIT_32B" -ne 0 ] && grep -q "backend/pom.xml" <<<"$STDERR_32B"; then
+  echo "ok: ㉜b GitLab 端改名既有檔案——第 3 道守門擋下"
+else
+  echo "FAIL: ㉜b GitLab 端改名既有檔案 —— exit=[$EXIT_32B] stderr=[$STDERR_32B]"
+  FAILURES=$((FAILURES + 1))
+fi
+
 # 情境 ㉝：sha 不是 gl/ref 的祖先——帶一個存在但不在 gl/master 祖先鏈上的 commit
 # （另一條無關分支），第 2 道守門要擋下。
 setup

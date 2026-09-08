@@ -126,20 +126,21 @@ fi
 # 的東西完全不進 internal。三道都通過才把 UPSTREAM/UPSTREAM_SHORT 定案。
 if [ "$TEST_MODE" = "0" ]; then
   if ! git rev-parse --verify -q "${UPSTREAM_SHA_INPUT}^{commit}" >/dev/null; then
-    echo "找不到 ${UPSTREAM_SHA_INPUT} 這個 commit，可能 ${UPSTREAM_REF} 尚未包含它。" >&2
+    echo "找不到 ${UPSTREAM_SHA_INPUT} 這個 commit：可能 ${UPSTREAM_REF} 尚未包含它，或短碼有歧義（改帶完整 sha）。" >&2
     exit 1
   fi
   if ! git merge-base --is-ancestor "$UPSTREAM_SHA_INPUT" "$UPSTREAM_REF"; then
     echo "${UPSTREAM_REF} 不包含這個 GitHub commit（${UPSTREAM_SHA_INPUT}）。" >&2
     exit 1
   fi
-  if ! git diff --diff-filter=MD --quiet "$UPSTREAM_SHA_INPUT" "$UPSTREAM_REF"; then
+  # --no-renames: 改名要拆成刪除加新增, 不然會被當成純新增放行.
+  if ! git diff --no-renames --diff-filter=MD --quiet "$UPSTREAM_SHA_INPUT" "$UPSTREAM_REF"; then
     echo "GitLab 端相對這個 GitHub commit 修改或刪除了檔案，或帶的 sha 太舊：" >&2
-    git diff --name-status --diff-filter=MD "$UPSTREAM_SHA_INPUT" "$UPSTREAM_REF" >&2
+    git diff --no-renames --name-status --diff-filter=MD "$UPSTREAM_SHA_INPUT" "$UPSTREAM_REF" >&2
     exit 1
   fi
   echo "GitLab 端相對這個 GitHub commit 新增的檔案（不會進 internal）："
-  git diff --name-only --diff-filter=A "$UPSTREAM_SHA_INPUT" "$UPSTREAM_REF"
+  git diff --no-renames --name-only --diff-filter=A "$UPSTREAM_SHA_INPUT" "$UPSTREAM_REF"
 
   UPSTREAM=$(git rev-parse "$UPSTREAM_SHA_INPUT")
   UPSTREAM_SHORT=$(git rev-parse --short "$UPSTREAM_SHA_INPUT")
