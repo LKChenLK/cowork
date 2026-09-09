@@ -139,8 +139,6 @@ if [ "$TEST_MODE" = "0" ]; then
     git diff --no-renames --name-status --diff-filter=MD "$UPSTREAM_SHA_INPUT" "$UPSTREAM_REF" >&2
     exit 1
   fi
-  echo "GitLab 端相對這個 GitHub commit 新增的檔案（不會進 internal）："
-  git diff --no-renames --name-only --diff-filter=A "$UPSTREAM_SHA_INPUT" "$UPSTREAM_REF"
 
   UPSTREAM=$(git rev-parse "$UPSTREAM_SHA_INPUT")
   UPSTREAM_SHORT=$(git rev-parse --short "$UPSTREAM_SHA_INPUT")
