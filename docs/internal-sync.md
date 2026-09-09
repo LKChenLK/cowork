@@ -42,11 +42,13 @@ branch 是同一套做法的業界術語，但這裡的上游是自家程式碼�
 commit 過，這一步會直接失敗。因此**首次同步 MUST 先由 internal 側把各獨佔檔案 commit 到
 `develop`**，之後才可能有東西可還原。
 
-獨佔檔就緒後，人工建立第一顆同步 commit 作為之後所有同步的基準點：
+獨佔檔就緒後，人工建立第一顆同步 commit 作為之後所有同步的基準點。錨點記的是
+**GitHub 上 `master` 的 sha**，不是 `gl/master` 的 tip——GitLab 鏡像可能已經多出
+掃描 commit 之類的東西，見第 3 節：
 
 ```bash
 git commit --allow-empty -m "upstream-sync: bootstrap" \
-  -m "Upstream-Commit: $(git rev-parse gl/master)"
+  -m "Upstream-Commit: <GitHub master 的 sha>"
 git push -u origin develop
 ```
 
@@ -58,16 +60,41 @@ git push -u origin develop
 
 ## 3. 每次同步
 
-在**專用 clone 或 worktree**（不與任何人的工作區共用）的 `develop` 上執行：
+**站在**要同步進去的 internal 主線 branch 上（**專用 clone 或 worktree**，不與任何人
+的工作區共用）執行：
 
 ```bash
-bash scripts/sync-upstream.sh
+bash scripts/sync-upstream.sh --official gl/master <GitHub sha>
 ```
 
-腳本會做 replace-then-restore：`git read-tree -u --reset gl/master` 把整棵樹換成
-上游（含上游的刪除），再用獨佔路徑清單把 internal 檔案撈回來，最後在一條新切出的
-`sync/upstream-<shorthash>` branch 上落一顆 commit 並推上 `origin`。**腳本
-NEVER 直接推 `develop`**——落地永遠是 feature branch → 人工確認與適配 → PR。
+主線＝目前站的 branch，不再是參數。`--official` 後面兩個位置引數順序固定：第一個
+MUST 以 `gl/` 開頭（上游 ref），第二個 MUST 是 7-40 位 hex（GitHub 上該 commit 的
+sha）。
+
+sha 從哪裡拿：internal 的 GitLab 鏡像不是純鏡像——每條 `gl/*` branch 上，鏡像流程
+會多出 GitHub 沒有的 commit（常見是一顆加掃描檔的 commit，有時再加一顆把它併回去
+的 merge commit）。要同步的 sha 一律是 **GitHub 上該 branch 的 commit**，不是
+`gl/<ref>` 的 tip：
+
+- GitHub 那邊直接看該 branch 最新 commit 的 sha
+- 若手上只有 `gl/<ref>` 且形狀是「掃描 commit + merge commit」，GitHub 側的 sha
+  通常是 `git rev-parse gl/<ref>^2`（merge commit 的第二個 parent）
+
+腳本 fetch 之後會做三道 sha 守門，都通過才會往下跑：
+
+1. `<sha>` 必須能解析成 commit——解不出來多半是 GitLab 鏡像還沒抓到它
+2. `<sha>` 必須是 `gl/<ref>` 的祖先——不是就是帶錯 commit，或帶了一個不相干分支的 sha
+3. `gl/<ref>` 相對 `<sha>` 只能新增檔案，不能修改或刪除——抓到修改或刪除，代表
+   GitLab 端動過 GitHub 已有的內容，或者帶的 sha 太舊（兩者之間 GitHub 自己也有
+   新 commit），這種情況要先確認拿到的是不是最新 sha
+
+三道都過後，腳本才把 `<sha>` 解析成完整 40 位存起來當這次同步的錨點與快照來源
+——`gl/<ref>` 上因鏡像多出來的東西完全不會進 internal。
+
+腳本會做 replace-then-restore：`git read-tree -u --reset <sha>` 把整棵樹換成上游
+在該 sha 的狀態（含上游的刪除），再用獨佔路徑清單把 internal 檔案撈回來，最後在
+一條新切出的 `sync/upstream-<shorthash>` branch 上落一顆 commit 並推上 `origin`。
+**腳本 NEVER 直接推 `develop`**——落地永遠是 feature branch → 人工確認與適配 → PR。
 
 腳本結束後，人在 `sync/upstream-<shorthash>` branch 上完成：
 
@@ -80,15 +107,47 @@ NEVER 直接推 `develop`**——落地永遠是 feature branch → 人工確認
    `develop` 會從同步落地那刻起壞掉，直到有人補救為止
 4. **發 PR 進 `develop`**，internal CI 綠燈後合併
 
-腳本執行前會做四道前置守門（在 `develop` 上、worktree 乾淨、獨佔清單外沒有 internal
-改動、沒有野生 untracked 檔），任何一道不過就中止，不會往下跑。這是整個流程唯一
-的安全裝置，**NEVER 為了讓同步跑完而跳過它們**——若真的擋到你，先解決守門指出的
-問題（多半是清單漏列了新的 internal 獨佔檔），而不是繞過檢查。
+腳本執行前，除了上面三道 sha 守門，還會做幾道一般守門：目前站的 branch 不能是
+detached HEAD、不能是 `test/*` 或 `sync/*`、`origin/<目前 branch>` 必須存在、
+worktree 乾淨、獨佔清單外沒有 internal 改動、沒有野生 untracked 檔，任何一道不過
+就中止，不會往下跑。這是整個流程唯一的安全裝置，**NEVER 為了讓同步跑完而跳過
+它們**——若真的擋到你，先解決守門指出的問題（多半是清單漏列了新的 internal 獨佔
+檔），而不是繞過檢查。
 
-若 internal 側的主線不叫 `develop`，帶第一個位置參數覆寫，例如
-`bash scripts/sync-upstream.sh <主線名>`（如 `bash scripts/sync-upstream.sh
-feature/main`）；不帶參數則預設 `develop`。**NEVER 直接改腳本裡的字面值**——
-`scripts/sync-upstream.sh` 是上游檔，同步會把改動蓋回預設，下一次執行就拒跑。
+若 internal 側的主線不叫 `develop`，站到實際的 branch 上執行即可，例如站在
+`feature/main` 上跑 `bash scripts/sync-upstream.sh --official gl/master <sha>`；
+上游 ref 也不一定要是 `gl/master`，見下方「用 feature 整合分支當主線」一節。
+**NEVER 直接改腳本裡的字面值**——`scripts/sync-upstream.sh` 是上游檔，同步會把
+改動蓋回預設，下一次執行就拒跑。
+
+---
+
+## 3.1 用 feature 整合分支當主線
+
+GitHub 端有時會先把幾個 feature 合進一條整合分支（例如 `feat/9E`），internal 側
+短期只能在自己對應的主線（例如 `9E`）上收，還不能動 `develop`。這種情況下，上游
+ref 換成該整合分支即可，用法不變：
+
+```bash
+bash scripts/sync-upstream.sh --official gl/feat/9E <GitHub sha>
+```
+
+`9E` 這條主線建議從 `develop` 切出（這樣它天生就帶著 `develop` 已有的所有同步
+錨點，不需要另外 bootstrap），站到 `9E` 上執行上面這行。收尾方式：
+
+1. GitHub 端把 `feat/9E` 以 **merge commit**（不是 squash）併回 `master`
+2. internal 側把 `9E` merge 進 `develop`
+3. 之後站到 `develop` 上跑 `bash scripts/sync-upstream.sh --official gl/master <GitHub
+   sha>`（sha 取新的 `master` tip），錨點祖先守門會發現 `9E` 帶進來的錨點是新
+   `gl/master` 對應 sha 的祖先，照常通過並繼續往下同步
+
+兩條鐵律：
+
+- **GitHub 端的整合分支（`feat/9E`）永遠不 rebase、不 force-push**——一旦重寫，
+  internal 側已經記下的錨點就不再是它的祖先，下次同步會被錨點守門擋下，MUST 人工
+  修錨才能繼續
+- **`9E` 併進 `master` 不 squash**——squash 會讓 internal 側記下的 `Upstream-Commit`
+  錨點從 `master` 的歷史裡消失，錨點祖先守門會誤判成錨點被污染
 
 ---
 
@@ -99,23 +158,24 @@ feature/main`）；不帶參數則預設 `develop`。**NEVER 直接改腳本裡�
 `test/*` branch，站上去反覆執行同一條指令，每次疊一顆新的快照 commit，腳本不會
 替你創建或丟棄任何 branch：
 
+測試模式的錨點查找與獨佔路徑還原固定用 `origin/develop`. 主線不是 develop 的站台, 測試模式
+驗到的會是 develop 的組合, 結果不可信; 沒有 develop 的站台會拿到「找不到基準同步 commit」.
+這種環境請站在主線上直接用 `--official <gl/ref> <GitHub sha>` 正式同步.
+
 ```bash
-git checkout -b test/mine develop            # 只做一次
-bash scripts/sync-upstream.sh gl/feat/<name> # 之後每次上游推進都重跑這行，站在 test/mine 上原地執行
+git checkout -b test/mine develop              # 只做一次
+bash scripts/sync-upstream.sh --test gl/feat/<name>  # 之後每次上游推進都重跑這行，站在 test/mine 上原地執行
 ```
 
-`gl/` 前綴是 remote 名稱，不可能是 internal 主線名稱，單參數形式因此沒有歧義：帶了
-以 `gl/` 開頭的單一參數，`MAIN_BRANCH` 自動預設 `develop`。非 `develop` 主線環境
-用兩參數形式：`bash scripts/sync-upstream.sh <主線名> gl/feat/<name>`。
+`--test` 只接受一個以 `gl/` 開頭的參數，沒有主線可以指定——擁有路徑固定從
+`develop` 還原。
 
-模式判定表（腳本用「目前站在哪條 branch」判斷，不需要額外參數）：
+模式判定表（腳本用「目前站在哪條 branch」判斷）：
 
 | 目前站的位置 | 結果 |
 |---|---|
-| `$MAIN_BRANCH` ＋帶測試 ref | 拒跑，指路「先 `git checkout -b test/<名字>`」 |
-| 自建的 `test/*` ＋帶測試 ref | in-place：就地疊一顆快照 commit，branch 不變 |
-| 其他 branch ＋帶測試 ref | 拒跑，無法判斷意圖，防止整棵樹替換波及不相干的 branch |
-| 任一 branch，不帶測試 ref（即 `gl/master`） | 官方同步語意，不受本節影響 |
+| 自建的 `test/*` | in-place：就地疊一顆快照 commit，branch 不變 |
+| 其他 branch | 拒跑，無法判斷意圖，防止整棵樹替換波及不相干的 branch |
 
 雙重隔離讓測試產物在基準機制眼裡完全隱形：
 
@@ -130,9 +190,9 @@ bash scripts/sync-upstream.sh gl/feat/<name> # 之後每次上游推進都重跑
 鐵律：
 
 - **本模式整棵樹替換**——`test/mine` 上任何不是 `test-sync:` 這條路徑產生的手工
-  改動，下次重跑都會被覆蓋；internal 接縫改動照舊只能進 `$MAIN_BRANCH` 的獨佔路徑，
+  改動，下次重跑都會被覆蓋；internal 接縫改動照舊只能進 `develop` 的獨佔路徑，
   絕不要指望 in-place 測試 branch 能保留它
-- **NEVER merge 進 `$MAIN_BRANCH`**——就算違規 merge 了，雙重隔離仍能保證它不會被
+- **NEVER merge 進 `develop`**——就算違規 merge 了，雙重隔離仍能保證它不會被
   誤選為下次同步的基準錨點，但它會把未經上游正式收錄的內容留在主線上，仍是需要
   人工清理的污染
 - **用完刪掉**——驗證告一段落後，`test/mine` 本地與 `origin` 都刪，不要留著佔位
@@ -156,13 +216,18 @@ in-place 中途失敗（如獨佔路徑尚未存在於 `origin/develop`）會留
 
 - 同步 PR **MUST NOT squash 合併**：squash 會丟掉 commit 上的 `Upstream-Commit:`
   trailer，下一次同步就找不到基準點。這條規則 MUST 寫進 internal 側的 PR 流程說明。
+- **GitHub 與 internal 兩邊，所有進主線的合併一律 merge commit，NEVER squash／
+  rebase**：squash 讓 trailer 消失，rebase 讓錨點不在新歷史裡；internal 那邊
+  squash 還會讓「獨佔清單外有 internal 改動」守門誤判上游內容。
 - `git remote set-url --push gl no_push`，從物理上擋掉誤推鏡像——`gl` 是唯讀
   上游，不該有人往它推東西。
-- **GitLab MUST 是真鏡像（`--mirror`），不是重新匯入**。同步 commit 訊息記的是
-  `gl/master` 的 short hash，整個流程的稽核能力全靠它——若鏡像是真 mirror，
-  SHA 與 GitHub 完全相同，可直接拿去 GitHub 對照；若改成重新匯入、squash 或
-  重打包，SHA 會全部變成 GitLab 自己的，對照能力當場歸零，而且不會有任何錯誤
-  訊息。鏡像設定變更 MUST 視為破壞性變更。
+- **GitLab 鏡像不保證是純鏡像**：鏡像流程可能在每條 `gl/*` branch 上多出 GitHub
+  沒有的 commit（例如掃描檔）。同步錨點與快照樹因此改記人工帶入的 GitHub sha，
+  不是 `gl/<ref>` 的 tip——見第 3 節的三道 sha 守門（sha 解析、祖先關係、只能
+  新增檔案）。這不代表鏡像設定可以隨便改：若改成重新匯入、squash 或重打包，
+  GitLab 上原本與 GitHub 相同的 commit 也會變成 GitLab 自己的新 SHA，第 3 節那
+  三道守門會全部失效或誤判，而且不會有清楚的錯誤訊息。鏡像設定變更 MUST 視為
+  破壞性變更。
 - 基準點用 **commit 而非 tag**：PR 可能被放棄或擱置，推分支時就移動的 tag 會
   指向從未落地的狀態；改從 `origin/develop` 的歷史找最後一顆同步 commit，基準
   因此只反映真正合併進 `develop` 的同步。
@@ -218,6 +283,6 @@ commit 到 `develop`，同步時 `git checkout develop -- <path>` 才有東西�
 - `scripts/sync-upstream.sh` — 同步腳本本體（internal 側執行、家裡維護）
 - `scripts/internal-owned-paths.txt` / `scripts/manual-merge-paths.txt` — 兩份清單
 - `scripts/test-sync-upstream.sh` — 守門行為的自動化驗證，在拋棄式 git repo 上跑
-  十六個情境，`bash scripts/test-sync-upstream.sh` 即可執行
+  一系列情境，`bash scripts/test-sync-upstream.sh` 即可執行
 - `deepagent-service/app/agent/runtime/base.py` — `AgentRuntime` 接縫（本流程要
   搬運的主體）
