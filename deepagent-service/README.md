@@ -3,7 +3,7 @@
 **analysis 線的分析服務**（`ERD_AGENT_PROVIDER=langgraph-analysis` 時由 Java 端呼叫）。基於
 [deepagents](https://github.com/langchain-ai/deepagents) harness 的 `create_deep_agent`——單一
 agent + skills 漸進揭露 + 內建 planning/檔案工具——模型用 DuckDB 工具自行查資料，再直寫
-self-contained HTML dashboard。目標模型 **qwen3.6-35B**。
+self-contained HTML dashboard。目標模型 **deepseek-v4-flash**（模型只會更強，harness 依此前提設計，見根目錄 `CLAUDE.md`「Harness 設計前提」）。
 
 與 llm api 線最大的差別在**資料怎麼進 HTML**：模型用 SQL 把統計算好，只把**被引用到的查詢結果**
 注入 `window.__ERD_RESULTS__`，瀏覽器只做笨渲染（不像 llm api 線注入全量原始資料、由瀏覽器 JS 現算）。
@@ -52,7 +52,7 @@ uv run --env-file ../.env.local fastapi dev --port 8000 --reload-dir app
 cd deepagent-service
 OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
 OPENAI_API_KEY=<your-openrouter-key> \
-AGENT_MODEL=<OpenRouter 上的 qwen3.6-35b model id> \
+AGENT_MODEL=deepseek/deepseek-v4-flash \
 AGENT_WORKSPACE_ROOT=/tmp/deepagent-workspace \
 uv run fastapi dev --port 8000 --reload-dir app
 ```
@@ -91,7 +91,7 @@ ERD_AGENT_ANALYSIS_BASE_URL=http://deepagent-service:8000
 ```
 
 其餘環境變數（`AGENT_MODEL`、`LANGFUSE_*` 等）見 `docker-compose.app.yml` 的
-`deepagent-service` service 定義；`DEEPAGENT_MODEL` 可覆寫預設模型（`qwen3.6-35b`）。
+`deepagent-service` service 定義；`AGENT_MODEL` 可覆寫預設模型（`deepseek-v4-flash`）。
 
 ## Workspace 佈局
 
