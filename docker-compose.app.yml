@@ -40,7 +40,7 @@ services:
       ERD_UPLOAD_SAMPLE_ROWS: ${ERD_UPLOAD_SAMPLE_ROWS:-20}
       ERD_AGENT_PROVIDER: ${ERD_AGENT_PROVIDER:-openai-compatible}
       ERD_AGENT_OPENAI_COMPATIBLE_BASE_URL: ${ERD_AGENT_OPENAI_COMPATIBLE_BASE_URL:-}
-      ERD_AGENT_OPENAI_COMPATIBLE_MODEL: ${ERD_AGENT_OPENAI_COMPATIBLE_MODEL:-qwen3.6-35b}
+      ERD_AGENT_OPENAI_COMPATIBLE_MODEL: ${ERD_AGENT_OPENAI_COMPATIBLE_MODEL:-deepseek-v4-flash}
       ERD_AGENT_OPENAI_COMPATIBLE_API_KEY: ${ERD_AGENT_OPENAI_COMPATIBLE_API_KEY:-}
       ERD_AGENT_OPENAI_COMPATIBLE_CHAT_PATH: ${ERD_AGENT_OPENAI_COMPATIBLE_CHAT_PATH:-/v1/chat/completions}
       ERD_AGENT_OPENAI_COMPATIBLE_AUTH_MODE: ${ERD_AGENT_OPENAI_COMPATIBLE_AUTH_MODE:-bearer}
@@ -75,7 +75,7 @@ services:
       # /chat、/repair 的 inbound bearer 強制驗證——同一個 env 餵 backend 端(見上方 backend 段),
       # 預設值一致,dev compose 開箱即用;internal 以真密值覆寫。
       AGENT_API_BEARER_TOKEN: ${AGENT_API_BEARER_TOKEN:-dev-agent-token}
-      AGENT_MODEL: ${AGENT_MODEL:-qwen3.6-35b}
+      AGENT_MODEL: ${AGENT_MODEL:-deepseek-v4-flash}
       # internal 環境 LLM API 認證:token-exchange 時 j1→j2 交換(鏡像 Java 端語意)
       AGENT_AUTH_MODE: ${AGENT_AUTH_MODE:-bearer}
       AGENT_TOKEN_EXCHANGE_URL: ${AGENT_TOKEN_EXCHANGE_URL:-}

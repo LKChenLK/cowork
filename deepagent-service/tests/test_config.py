@@ -70,6 +70,6 @@ def test_defaults_without_any_source(monkeypatch, tmp_path):
     for key in ("AGENT_MODEL", "AGENT_TOKEN_TTL", "LANGFUSE_PUBLIC_KEY"):
         monkeypatch.delenv(key, raising=False)
     settings = get_settings()
-    assert settings.AGENT_MODEL == "qwen3.6-35b"
+    assert settings.AGENT_MODEL == "deepseek-v4-flash"
     assert settings.AGENT_TOKEN_TTL == 300
     assert settings.LANGFUSE_PUBLIC_KEY is None
