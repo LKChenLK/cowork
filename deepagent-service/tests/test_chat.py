@@ -924,6 +924,22 @@ def scripted_flow_concurrent_edit(tmp_path, monkeypatch):
                     },
                 ],
             ),
+            # deepagents 0.7 起同一則 message 對同一路徑的第二個 mutation 直接退件(不再靜默
+            # 互蓋),模型下一步重送被退的那個 edit。
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "edit_file",
+                        "id": "call-edit-b-retry",
+                        "args": {
+                            "file_path": "notes.md",
+                            "old_string": "<!-- SLOT_B -->",
+                            "new_string": "<div id='panel-b'>B</div>",
+                        },
+                    },
+                ],
+            ),
             AIMessage(content="兩個區塊都已補上。"),
         ]
     )
@@ -934,7 +950,8 @@ def scripted_flow_concurrent_edit(tmp_path, monkeypatch):
 async def test_concurrent_edit_file_calls_both_land_on_notes_md(
     tmp_path, scripted_flow_concurrent_edit
 ) -> None:
-    """同一則 AI message 併發兩個 edit_file 改同一檔案的不相交區段時,兩個改動 MUST 都在。"""
+    """同一則 AI message 併發兩個 edit_file 改同一檔案:不得 lost-update——第二個被退件後
+    重送,兩個改動 MUST 都在。"""
     await _post_chat(tmp_path)
 
     workspace = build_workspace_store().prepare("user-1", "sess-1")

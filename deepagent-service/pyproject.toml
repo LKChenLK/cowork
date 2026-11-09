@@ -4,8 +4,8 @@ version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi[standard]>=0.140", # [standard] 含 fastapi CLI 與 uvicorn;>=0.140 才有 fastapi.sse
-    "deepagents==0.5.5", # internal registry 僅有 0.5.x;開發與生產一律鎖同一版,不另維護 internal 變體
-    "langchain>=1.0",
+    "deepagents==0.7.34", # sandbox 整合需 0.7.x(execute 輸出 offload、delete);開發與生產一律鎖同一版,不另維護 internal 變體
+    "langchain>=1.4.9", # deepagents 0.7.x 下限
     "langchain-openai>=1.0",
     "langgraph>=1.0",
     "duckdb>=1.2",
@@ -43,7 +43,6 @@ constraint-dependencies = [
     "opentelemetry-proto==1.39.1",
     "wrapt==1.17.3",
     "protobuf==6.33.6",
-    "langchain-anthropic==1.5.0", # langchain 傳遞依賴;釘住避免 internal registry 未同步的新版
 ]
 
 [tool.ruff]

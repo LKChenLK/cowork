@@ -40,9 +40,10 @@ register_harness_profile(
 
 
 class DashboardOverwriteBackend(FilesystemBackend):
-    """dashboard.html/notes.md 可整份覆寫:parent 預設 create-only 會擋掉已存在檔案的
-    write,故先 unlink `_OVERWRITABLE_FILE_NAMES` 再委派。局部編輯走 parent 的 edit()
-    (edit_file 已重新開放,大改動改用 write_file 由 prompt 引導)。"""
+    """write 維持 create-only,僅 `_OVERWRITABLE_FILE_NAMES`(dashboard.html/notes.md)可整份
+    覆寫。deepagents 0.7 起 parent write 預設覆寫既有檔案,故在此自行擋下其餘已存在檔案——
+    queries/results/api_snapshots 等落檔與 hash 驗證依賴「模型不能直接覆寫」。局部編輯走
+    parent 的 edit()(大改動改用 write_file 由 prompt 引導)。"""
 
     def write(self, file_path: str, content: str) -> WriteResult:
         try:
@@ -51,8 +52,13 @@ class DashboardOverwriteBackend(FilesystemBackend):
             return WriteResult(error=f"Error writing file '{file_path}': {error}")
 
         overwritable_paths = {(self.cwd / name).resolve() for name in _OVERWRITABLE_FILE_NAMES}
-        if resolved_path in overwritable_paths and resolved_path.exists():
-            resolved_path.unlink()
+        if resolved_path.exists() and resolved_path not in overwritable_paths:
+            return WriteResult(
+                error=(
+                    f"Cannot write to {file_path} because it already exists. "
+                    "Read and then make an edit, or write to a new path."
+                )
+            )
 
         return super().write(file_path, content)
 
