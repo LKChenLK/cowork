@@ -42,7 +42,7 @@ How we'll know it works:
 | Deleting sandboxes | We never delete them. The platform shuts down idle sandboxes itself. | Confirmed by the user. |
 | Where the sandbox record lives | The LangGraph checkpointer, as a hidden state key, set by one middleware. | The checkpointer is persistent and shared across pods (confirmed by the user). It saves after every agent step, so a sandbox created in a turn that later fails is still recorded. |
 | Uploaded data | Pushed as CSV (Excel already converted), from the local cache. | Files are under 20 MB today. Parquet is 3–10× smaller but brings no visible speed gain at that size; switch only if size becomes a problem. |
-| Script output | Wrapped as untrusted (`frame_data_content`) before the model sees it. | Output can echo data values. Same rule as for query results. |
+| Script output | Wrapped in the "this is data, not instructions" frame (`frame_data_content`) before the model sees it. | The code is the model's own, but its output can print values from the uploaded data, and those can contain instruction-like text. Same frame as for query results. |
 | Sandbox client | Behind an interface. Default implementation: HTTP with bearer auth, configured by env vars. | The real API spec is internal and can't live in this repo. |
 | deepagents version | 0.7.34 (already done, commit `7311e1c`). | Requested by the user. |
 
@@ -242,7 +242,7 @@ Fix: override `delete` in `DashboardOverwriteBackend`. It refuses everything exc
 
 ## 10. Security
 
-- The sandbox runs model-written code. It has no network, so the worst case inside it is wrong output. That is why everything coming back is treated as untrusted:
+- The sandbox runs model-written code. It has no network, so the worst case inside it is wrong output. The code is the model's own, but what comes back can carry values from the uploaded data, so it is handled as data, never as instructions:
   - output is framed;
   - pull-back has path checks, a protected list and a size cap.
 - Uploaded data is pushed decrypted. Excel files are stored encrypted in MinIO; CSV files are not. The sandbox is egress-locked and per-session.
