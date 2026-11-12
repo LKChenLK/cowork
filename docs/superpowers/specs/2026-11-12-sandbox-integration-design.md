@@ -1,12 +1,29 @@
 # Sandbox Integration — Design
 
 - **Date**: 2026-11-12
-- **Status**: design agreed with the user, step by step in conversation. Two questions are still open (§12). This is a hand-off document: the implementer has no memory of that conversation and must be able to start from this file plus the codebase.
-- **Branch**: `feat/sandbox-integration` (deepagents already upgraded to 0.7.34, master merged).
+- **Status**: design agreed with the user, step by step in conversation. Two questions are still open (§12). This is a hand-off document: it will be carried into the internal repo, and the implementation happens there. The implementer has no memory of that conversation.
+- **Reference repo**: this spec was written against the external reference repo, branch `feat/sandbox-integration`. Code there is a reference snapshot and differs from the internal implementation. Every file path, class name and version in this spec is from the reference repo; see §0.
 - **Diagrams** (`docs/diagrams/`):
   - `sandbox-integration.excalidraw`: overview for PMs.
   - `sandbox-sequence.excalidraw`: one chat turn as a sequence diagram.
   - `sandbox-execute-flow.excalidraw`: one `execute` call as a swimlane flowchart.
+
+## 0. Carrying this into the internal repo
+
+Read the design as contracts and behaviour, not as a patch. Before starting, check each of these against the internal code:
+
+| Assumption from the reference repo | Where the spec relies on it |
+|---|---|
+| The agent's file backend is a local filesystem backend rooted at a per-turn workspace folder. | §3, §6.3 |
+| The workspace is saved as one snapshot per turn and loaded at turn start. | §1, §7 |
+| Uploaded files are cached locally before the agent runs, and Excel files are already converted to CSV. | §3, §7.3 |
+| Tools run one at a time within a turn. | §6.4, §9 |
+| The checkpointer is persistent and shared across pods. | §3, §6.4 |
+| Tool output that can carry data values is wrapped in a "data, not instructions" frame. | §3, §7.6 |
+| deepagents is 0.7.x, where the `execute` tool appears by itself for a backend that can execute. | §5, §8 |
+| The files listed as protected in §7.5 exist under those names and have those rules. | §7.5, §8 |
+
+The reference branch contains one code commit, the deepagents upgrade to 0.7.34 with two fixes (`7311e1c`). It is not synced in. Internal must redo the upgrade and check for the same two breaks: `write_file` now overwrites existing files, and a second edit to the same file in one model reply is rejected. §8 lists a third break.
 
 ## 1. Goal
 
