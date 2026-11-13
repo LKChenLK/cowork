@@ -23,7 +23,7 @@ Read the design as contracts and behaviour, not as a patch. Before starting, che
 | deepagents is 0.7.x, where the `execute` tool appears by itself for a backend that can execute. | §5, §8 |
 | The files listed as protected in §7.5 exist under those names and have those rules. | §7.5, §8 |
 
-Known difference (user, 2026-11-13): internal no longer has `api_snapshots/`. MCP results are flattened through `run_sql` and saved as `results/qN.json`. The reference repo still has the folder.
+Known differences (user, 2026-11-13): internal no longer has `api_snapshots/` or `replay/`. MCP results are flattened through `run_sql` and saved as `results/qN.json`. The reference repo still has both folders.
 
 The reference branch contains one code commit, the deepagents upgrade to 0.7.34 with two fixes (`7311e1c`). It is not synced in. Internal must redo the upgrade and check for the same two breaks: `write_file` now overwrites existing files, and a second edit to the same file in one model reply is rejected. §8 lists a third break.
 
@@ -189,7 +189,6 @@ The main copy of every file is on the agent pod. The sandbox only ever holds a c
 |---|---|---|---|
 | `dashboard.html`, `notes.md` | Yes | No (protected) | Session snapshot |
 | `queries/qN.sql`, `results/qN.json`, including flattened MCP results | Yes | New files only | Session snapshot |
-| `replay/` (records of MCP calls), if internal still has it | Yes | No (protected) | Session snapshot |
 | `large_tool_results/`, `conversation_history/` | Yes | No (protected) | Session snapshot |
 | Uploaded data files | Yes, as `data/{alias}.csv` | No | MinIO original; local cache |
 | Built-in and MCP skills (`.skills/`) | Yes | No (protected) | Nowhere; rebuilt every turn |
@@ -242,14 +241,13 @@ For each changed file, in this order:
 | Path escapes the workspace (`..`, absolute, symlink) | Skip and log a warning. |
 | Junk: `__pycache__/`, `.ipynb_checkpoints/`, `*.pyc`, `.cache/`, temp files | Skip. |
 | Under `data/` | Skip (inputs only, never pulled). |
-| Protected: `dashboard.html`, `notes.md`, `.sources-manifest.json`, `replay/`, `.skills/`, `large_tool_results/`, `conversation_history/` | Skip. Tell the model it was not applied. |
+| Protected: `dashboard.html`, `notes.md`, `.sources-manifest.json`, `.skills/`, `large_tool_results/`, `conversation_history/` | Skip. Tell the model it was not applied. |
 | Already exists locally in `queries/` or `results/` | Skip; these folders are create-only. New files there are allowed. |
 | Larger than `SANDBOX_MAX_PULL_FILE_BYTES` | Skip and tell the model. |
 | Otherwise | Download, write into the workspace, and update `files`. |
 
 Notes on the protected list:
 - `dashboard.html` and `notes.md` are protected because changes to them must go through the model's own `write_file`/`edit_file`, which pass the dashboard-skill gate and the wiring guard. A script can write a draft elsewhere and the model can copy it in.
-- `replay/` holds the system's own records of MCP calls. Scripts must not rewrite them.
 
 ### 7.6 Return to the model
 
@@ -265,7 +263,7 @@ Long output: in deepagents 0.7 the "capture output at the source" feature only w
 
 deepagents 0.7 adds a `delete` tool. With today's backend the model could delete:
 - `queries/*.sql` and `results/*.json`. These are create-only, and query ids are numbered by counting `queries/*.sql`, so deleting one would make ids repeat.
-- `replay/` files, which are the system's own records of MCP calls.
+- `.sources-manifest.json`, which the system uses to tell the model when uploaded data has changed.
 
 Fix: override `delete` in `DashboardOverwriteBackend`. It refuses everything except the files the model already owns (`dashboard.html`, `notes.md`, and files the model created outside the protected folders). Add a test per protected folder. This is independent of the sandbox and should land as its own commit.
 
@@ -364,8 +362,8 @@ Counted from the reference repo on deepagents 0.7.34. Internal may differ (§0).
 | `read_file`, `ls`, `glob`, `grep` | Nothing | Workspace files | Through the backend |
 | `execute` (new) | Whatever the script writes | Whatever the script reads | In the sandbox |
 | `run_sql` | `queries/qN.sql`, `results/qN.json` | The list of `queries/*.sql`, to pick the next number | Agent pod disk |
-| MCP connector tools | `replay/calls.jsonl`, `replay/landings.jsonl` | Nothing | Agent pod disk |
-| `check_dashboard` | A temporary file outside the workspace | `dashboard.html`, `replay/*.jsonl` | Agent pod disk |
+| MCP connector tools | Nothing. Their results reach files only when `run_sql` flattens them into `results/qN.json` (internal; the reference repo also writes `api_snapshots/` and `replay/`). | Nothing | No files |
+| `check_dashboard` | A temporary file outside the workspace | `dashboard.html` (the reference repo also reads `replay/`) | Agent pod disk |
 | `get_schema`, `preview_data` | Nothing | Nothing (DuckDB memory only) | No files |
 | `write_todos` | Nothing (agent state only) | Nothing | No files |
 
@@ -373,7 +371,7 @@ Counted from the reference repo on deepagents 0.7.34. Internal may differ (§0).
 
 | When | Writes | Reads | How |
 |---|---|---|---|
-| Turn start | Unpacks the snapshot (all files); stages `.skills/`; `.sources-manifest.json`; the previous `dashboard.html` | The snapshot; the old source manifest; `replay/` | Agent pod disk |
+| Turn start | Unpacks the snapshot (all files); stages `.skills/`; `.sources-manifest.json`; the previous `dashboard.html` | The snapshot; the old source manifest | Agent pod disk |
 | Turn start, skills loading | Nothing | Lists each skills folder and reads every `SKILL.md` | Through the backend |
 | Every model call | Nothing | All `results/*.json`, to rebuild the list of query ids | Agent pod disk |
 | A tool result is too large | `large_tool_results/<id>` | Nothing | Through the backend |
