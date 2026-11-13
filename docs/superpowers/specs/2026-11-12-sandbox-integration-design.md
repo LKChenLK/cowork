@@ -23,6 +23,8 @@ Read the design as contracts and behaviour, not as a patch. Before starting, che
 | deepagents is 0.7.x, where the `execute` tool appears by itself for a backend that can execute. | §5, §8 |
 | The files listed as protected in §7.5 exist under those names and have those rules. | §7.5, §8 |
 
+Known difference (user, 2026-11-13): internal no longer has `api_snapshots/`. MCP results are flattened through `run_sql` and saved as `results/qN.json`. The reference repo still has the folder.
+
 The reference branch contains one code commit, the deepagents upgrade to 0.7.34 with two fixes (`7311e1c`). It is not synced in. Internal must redo the upgrade and check for the same two breaks: `write_file` now overwrites existing files, and a second edit to the same file in one model reply is rejected. §8 lists a third break.
 
 ## 1. Goal
@@ -187,7 +189,7 @@ The main copy of every file is on the agent pod. The sandbox only ever holds a c
 |---|---|---|---|
 | `dashboard.html`, `notes.md` | Yes | No (protected) | Session snapshot |
 | `queries/qN.sql`, `results/qN.json`, including flattened MCP results | Yes | New files only | Session snapshot |
-| `api_snapshots/`, `replay/` (raw MCP data and its records) | Yes | No (protected) | Session snapshot |
+| `replay/` (records of MCP calls), if internal still has it | Yes | No (protected) | Session snapshot |
 | `large_tool_results/`, `conversation_history/` | Yes | No (protected) | Session snapshot |
 | Uploaded data files | Yes, as `data/{alias}.csv` | No | MinIO original; local cache |
 | Built-in and MCP skills (`.skills/`) | Yes | No (protected) | Nowhere; rebuilt every turn |
@@ -240,14 +242,14 @@ For each changed file, in this order:
 | Path escapes the workspace (`..`, absolute, symlink) | Skip and log a warning. |
 | Junk: `__pycache__/`, `.ipynb_checkpoints/`, `*.pyc`, `.cache/`, temp files | Skip. |
 | Under `data/` | Skip (inputs only, never pulled). |
-| Protected: `dashboard.html`, `notes.md`, `.sources-manifest.json`, `api_snapshots/`, `replay/`, `.skills/`, `large_tool_results/`, `conversation_history/` | Skip. Tell the model it was not applied. |
+| Protected: `dashboard.html`, `notes.md`, `.sources-manifest.json`, `replay/`, `.skills/`, `large_tool_results/`, `conversation_history/` | Skip. Tell the model it was not applied. |
 | Already exists locally in `queries/` or `results/` | Skip; these folders are create-only. New files there are allowed. |
 | Larger than `SANDBOX_MAX_PULL_FILE_BYTES` | Skip and tell the model. |
 | Otherwise | Download, write into the workspace, and update `files`. |
 
 Notes on the protected list:
 - `dashboard.html` and `notes.md` are protected because changes to them must go through the model's own `write_file`/`edit_file`, which pass the dashboard-skill gate and the wiring guard. A script can write a draft elsewhere and the model can copy it in.
-- `api_snapshots/` and `replay/` are hash-checked on the next turn. Overwriting them would drop tables.
+- `replay/` holds the system's own records of MCP calls. Scripts must not rewrite them.
 
 ### 7.6 Return to the model
 
@@ -263,7 +265,7 @@ Long output: in deepagents 0.7 the "capture output at the source" feature only w
 
 deepagents 0.7 adds a `delete` tool. With today's backend the model could delete:
 - `queries/*.sql` and `results/*.json`. These are create-only, and query ids are numbered by counting `queries/*.sql`, so deleting one would make ids repeat.
-- `api_snapshots/` and `replay/` files, which breaks the next turn's hash check.
+- `replay/` files, which are the system's own records of MCP calls.
 
 Fix: override `delete` in `DashboardOverwriteBackend`. It refuses everything except the files the model already owns (`dashboard.html`, `notes.md`, and files the model created outside the protected folders). Add a test per protected folder. This is independent of the sandbox and should land as its own commit.
 
@@ -345,3 +347,82 @@ All tests use a fake in-memory `SandboxClient` that records calls and simulates 
 - **`docs/architecture.md`:** add the sandbox to the deepagent section.
 - **`docs/internal-implementation-guide.md`:** the optional `build_sandbox_client()` and the `SANDBOX_*` env vars.
 - **`one.properties`:** the new keys, with secrets left empty.
+
+## Appendix A. Which code touches the workspace, and what each design costs
+
+Counted from the reference repo on deepagents 0.7.34. Internal may differ (§0).
+
+### A.1 Tools the model calls
+
+"Through the backend" means the call follows whichever file system is the main one. "Agent pod disk" means our own code reads or writes local disk directly, whatever the backend is.
+
+| Tool | Writes | Reads | How |
+|---|---|---|---|
+| `write_file` | Any allowed path: `dashboard.html`, `notes.md`, new files | Whether the file exists | Through the backend |
+| `edit_file` | The target file | The target file | Through the backend |
+| `delete` (new in 0.7) | Removes the target | Whether it exists | Through the backend |
+| `read_file`, `ls`, `glob`, `grep` | Nothing | Workspace files | Through the backend |
+| `execute` (new) | Whatever the script writes | Whatever the script reads | In the sandbox |
+| `run_sql` | `queries/qN.sql`, `results/qN.json` | The list of `queries/*.sql`, to pick the next number | Agent pod disk |
+| MCP connector tools | `replay/calls.jsonl`, `replay/landings.jsonl` | Nothing | Agent pod disk |
+| `check_dashboard` | A temporary file outside the workspace | `dashboard.html`, `replay/*.jsonl` | Agent pod disk |
+| `get_schema`, `preview_data` | Nothing | Nothing (DuckDB memory only) | No files |
+| `write_todos` | Nothing (agent state only) | Nothing | No files |
+
+### A.2 System code that is not a tool
+
+| When | Writes | Reads | How |
+|---|---|---|---|
+| Turn start | Unpacks the snapshot (all files); stages `.skills/`; `.sources-manifest.json`; the previous `dashboard.html` | The snapshot; the old source manifest; `replay/` | Agent pod disk |
+| Turn start, skills loading | Nothing | Lists each skills folder and reads every `SKILL.md` | Through the backend |
+| Every model call | Nothing | All `results/*.json`, to rebuild the list of query ids | Agent pod disk |
+| A tool result is too large | `large_tool_results/<id>` | Nothing | Through the backend |
+| The conversation gets too long | `conversation_history/<thread>.md` (rare) | The same file | Through the backend |
+| Turn end | The snapshot zip | `dashboard.html`, all `results/*.json`, then every workspace file | Agent pod disk |
+
+### A.3 Sandbox API calls per operation
+
+Assumes one file per `upload` or `download` call, as the API was described.
+
+| Operation | Agent pod is main (this spec) | Sandbox is main (`BaseSandbox` as shipped) |
+|---|---|---|
+| `ls`, `read_file`, `glob`, `grep` | 0 | 1 |
+| `write_file` | 0 | 2 (make folders, then upload) |
+| `edit_file` | 0 | 1 if old and new text are under 50 KB together; otherwise 4 |
+| `delete` | 0 | 2 |
+| `execute` | changed files pushed + 1 run + 1 listing + new files pulled | 1 |
+| `run_sql` | 0 | 2 uploads, so the model's `ls` sees the new files |
+| `check_dashboard` | 0 | 1 download |
+| Skills loading at turn start | 0 | 1 per skills folder + 1 per `SKILL.md` |
+| A large tool result is saved | 0 | 2 |
+| Previous dashboard at turn start | 0 | 1 upload |
+| Turn end | 0 | 1 listing + 1 download per file changed in the sandbox |
+| Sandbox missing (first use, or shut down while idle) | 1 create + every workspace file + uploaded data. Only when a script runs. | 1 create + every workspace file + uploaded data. On any turn. |
+
+### A.4 Three example turns (sandbox already running)
+
+The base turn: the model reads 2 skill documents, runs 6 queries, writes the dashboard once and edits it twice. The reference repo has one skills folder with 2 skills.
+
+| Turn | Agent pod is main | Sandbox is main |
+|---|---|---|
+| Base turn, no script | 0 | 24 = 3 skills + 1 previous dashboard + 2 reads + 12 query files + 2 write + 2 edits + 2 turn end |
+| Base turn + 1 script that makes 1 file | 16 = 13 pushed (script + 12 query files) + 1 run + 1 listing + 1 pulled | 28 = 24 + 2 write script + 1 run + 1 more download at turn end |
+| Base turn + 5 scripts, 1 file each | 32 = 16 for the first + 4 for each later one | 44 = 24 + 5 × 3 + 5 more downloads at turn end |
+
+Reading the numbers:
+- A turn with no script costs nothing when the agent pod is main, and about 24 calls when the sandbox is main.
+- Each extra script costs about the same in both: 4 calls against 3.
+- If many files must move at once, both designs can pack them into one archive: 1 upload plus 1 unpack command. That turns the 13-file push into 2 calls and a full restore into about 3.
+
+### A.5 Costs other than call counts
+
+| Cost | Agent pod is main | Sandbox is main |
+|---|---|---|
+| Sandboxes running | Only for sessions that run a script | For every active session |
+| If the sandbox API is down | Only `execute` fails | The agent cannot read or write any file |
+| If the sandbox dies mid-turn | Nothing is lost | The turn's files that were only in the sandbox are lost |
+| Speed of file tools | Local disk | One API call plus a command in the pod, each time |
+| Code we must write | Push, pull-back rules, change listing, path mapping | Restore at turn start, download at turn end, an upload after every `run_sql`, a download for `check_dashboard`, write rules rebuilt on the sandbox side |
+| Paths in scripts | The agent's paths and the sandbox's differ; commands use relative paths | The same everywhere |
+| Stale views | None for file tools; scripts see the state as of the push just before them | None |
+| Rules on writes (create-only, protected files) | Enforced: scripts cannot overwrite protected files | Scripts can change any file |
