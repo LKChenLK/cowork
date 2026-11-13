@@ -179,6 +179,23 @@ They are easy to unit-test without any network.
 
   How to analyse belongs in a skill, not in the prompt.
 
+### 6.8 Where each kind of file lives
+
+The main copy of every file is on the agent pod. The sandbox only ever holds a copy.
+
+| Files | Pushed to the sandbox | Pulled back | Saved between turns in |
+|---|---|---|---|
+| `dashboard.html`, `notes.md` | Yes | No (protected) | Session snapshot |
+| `queries/qN.sql`, `results/qN.json`, including flattened MCP results | Yes | New files only | Session snapshot |
+| `api_snapshots/`, `replay/` (raw MCP data and its records) | Yes | No (protected) | Session snapshot |
+| `large_tool_results/`, `conversation_history/` | Yes | No (protected) | Session snapshot |
+| Uploaded data files | Yes, as `data/{alias}.csv` | No | MinIO original; local cache |
+| Built-in and MCP skills (`.skills/`) | Yes | No (protected) | Nowhere; rebuilt every turn |
+| Skills the agent writes for the user | Yes, with the rest of `.skills/` | No | Open; see §12 question 3 |
+| Files a script creates | Created there | Yes | Session snapshot |
+
+Because results and MCP data are ordinary workspace files, `ls`, `read_file` and `grep` see them locally, and `execute` sees them because they are pushed before every command. Nothing extra is needed after `run_sql`.
+
 ## 7. One `execute` call
 
 ### 7.1 Sandbox record shape
@@ -200,7 +217,7 @@ Paths are relative to the workspace root. In the sandbox they sit under `SANDBOX
 
 ### 7.3 Push
 
-1. Walk the workspace, skipping `.skills/` (staged fresh every turn) and junk (§7.5).
+1. Walk the workspace, skipping junk (§7.5). `.skills/` is included, so a script that ships with a skill can run in the sandbox. It is never pulled back (§7.5).
 2. Upload each file whose fingerprint differs from `files`.
 3. Upload each uploaded data file to `data/{alias}.csv` if its fingerprint differs.
 4. Update `files` after each successful upload.
@@ -301,6 +318,15 @@ All tests use a fake in-memory `SandboxClient` that records calls and simulates 
      - (b) Scripts write `results/s{N}.json` in the same shape as query results, and injection is extended to `sN`. Extending injection means changes to `results.py` (the reference pattern), the dashboard skill's data contract and Java `ArtifactAssembler` detection.
    - Recommendation: (a) for v1; (b) together with the future number check.
 2. **What does the API's `execute` return?** Does it include the exit code? Does it return normal output and errors separately or combined? `HttpSandboxClient` maps either shape to `SandboxExecResult`; this only decides the mapping code.
+
+3. **Where do skills that the agent writes for the user go?**
+   - Background: in the reference repo, user skills are loaded read-only from a per-user folder in storage and staged into `.skills/` each turn. `.skills/` is rebuilt every turn and left out of the session snapshot, so there is no way to save a skill the agent writes. How internal handles this is not known here.
+   - A skill belongs to the user, not to one session. So it should not live in the session snapshot or only in the session's sandbox.
+   - Recommendation: the agent writes the skill with `write_file` on the agent pod, into a fixed folder. At turn end, the system saves new or changed skills to the per-user folder in storage. The sandbox never creates or changes skills: `.skills/` is never pulled back.
+   - To settle with the user:
+     - Is a skill kept across sessions, or only for the session?
+     - Internal storage forbids overwriting a key, so changing a skill needs versioned keys.
+     - A saved skill is loaded into later sessions. Should saving one need the user's confirmation, so that instruction-like text in data cannot plant a lasting skill?
 
 ## 13. Out of scope (v1)
 
